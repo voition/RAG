@@ -212,3 +212,294 @@ netstat -ano | findstr :6066
 ---
 
 **Enjoy your local LLM chatbot! 🤖**
+
+
+
+
+
+
+
+# LangChain 本地大模型应用实践
+
+本项目通过三个实际案例展示了如何使用 LangChain 框架与本地大模型进行交互，包括基础的链式调用、本地模型加载、以及基于 RAG（检索增强生成）的问答系统。
+
+## 项目结构
+
+```
+├── custom_chain.py      # LCEL 表达式构造自定义链
+├── llm_chain.py         # 加载本地 HuggingFace 模型并构建链
+├── retrieval_qa.py      # RAG 检索增强生成问答系统
+├── sanguoyanyi.txt      # 三国演义文本（用于 RAG 示例）
+└── README.md            # 项目说明文档
+```
+
+## 功能特点
+
+### 1. custom_chain.py - LCEL 表达式链
+- **核心功能**：使用 LangChain 表达式语言（LCEL）快速构建处理链
+- **技术栈**：ChatOpenAI + ChatPromptTemplate + StrOutputParser
+- **应用场景**：简单的文本生成任务，如生成包含特定主题的诗句
+
+### 2. llm_chain.py - 本地模型加载
+- **核心功能**：加载本地 HuggingFace 模型并包装为 LangChain 格式
+- **技术栈**：Transformers + HuggingFacePipeline + ChatPromptTemplate
+- **应用场景**：完全离线环境下的对话任务
+
+### 3. retrieval_qa.py - RAG 问答系统
+- **核心功能**：基于向量检索的文档问答系统
+- **技术栈**：FAISS + HuggingFaceEmbeddings + RetrievalQA
+- **应用场景**：基于特定文档的知识问答（如三国演义问答）
+
+## 环境依赖
+
+### 基础依赖
+```bash
+pip install langchain langchain-community langchain-huggingface
+pip install langchain-openai langchain-chroma
+pip install transformers torch accelerate
+pip install faiss-cpu  # 或 faiss-gpu
+pip install sentence-transformers
+pip install jieba
+```
+
+### 可选依赖（根据使用场景）
+```bash
+# 如需使用 OpenAI API
+pip install openai
+
+# 如需使用 GPU 加速
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+## 配置说明
+
+### 1. 模型配置
+
+三个文件都涉及模型配置，根据你的环境选择：
+
+#### 使用 Ollama（推荐，轻量级）
+```python
+chat_model = ChatOpenAI(
+    openai_api_key="ollama",
+    base_url="http://localhost:11434/v1",
+    model="qwen:4b"  # 或其它 Ollama 模型
+)
+```
+
+#### 使用本地 HuggingFace 模型
+```python
+model_path = r"D:\model_T\Qwen\Qwen2.5-0.5B-Instruct"
+model = AutoModelForCausalLM.from_pretrained(
+    model_path,
+    torch_dtype="auto",
+    device_map="cuda"  # 或 "cpu"
+)
+```
+
+#### 使用嵌入模型
+```python
+embedding = HuggingFaceEmbeddings(
+    model_name='models/AI-ModelScope/bge-large-zh-v1___5'
+)
+```
+
+### 2. 文件路径配置
+- `custom_chain.py` 和 `retrieval_qa.py` 中的模型路径需要根据实际情况修改
+- `retrieval_qa.py` 需要准备 `sanguoyanyi.txt` 文件
+
+## 使用方法
+
+### 1. 运行 custom_chain.py
+```bash
+python custom_chain.py
+```
+**预期输出**：一句包含"花"的诗句，例如：
+```
+"春花秋月何时了，往事知多少"
+```
+
+### 2. 运行 llm_chain.py
+```bash
+python llm_chain.py
+```
+**预期输出**：模型对"你好"的回复，例如：
+```
+你好！我是智能助手，很高兴为你服务。有什么我可以帮助你的吗？
+```
+
+### 3. 运行 retrieval_qa.py
+```bash
+python retrieval_qa.py
+```
+**预期输出**：
+- 先打印检索到的相关文档片段
+- 然后打印问答结果，例如：
+```
+相关文档:
+文档 1:
+关羽、张飞、赵云、马超、黄忠被称为五虎上将...
+----------------------------------------
+{'query': '五虎上将有哪些?', 'result': '五虎上将是关羽、张飞、赵云、马超、黄忠'}
+```
+
+## 核心代码解析
+
+### 1. LCEL 链式调用（custom_chain.py）
+```python
+# 使用管道符 | 构建处理链
+chain = prompt | chat_model | output_parser
+
+# 调用链
+result = chain.invoke({"topic": "花"})
+```
+LCEL 让代码更简洁，类似函数式编程的管道操作。
+
+### 2. 本地模型包装（llm_chain.py）
+```python
+# 创建 HuggingFace pipeline
+pipe = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    max_new_tokens=512
+)
+
+# 包装为 LangChain 格式
+llm = HuggingFacePipeline(pipeline=pipe)
+
+# 构建链
+chain = prompt | llm
+```
+
+### 3. RAG 问答系统（retrieval_qa.py）
+```python
+# 1. 文档加载与分割
+loader = TextLoader("sanguoyanyi.txt", encoding='utf-8')
+docs = loader.load()
+chunks = text_splitter.split_documents(docs)
+
+# 2. 向量化与存储
+embedding = HuggingFaceEmbeddings(model_name='...')
+vs = FAISS.from_documents(chunks, embedding)
+retriever = vs.as_retriever()
+
+# 3. 构建问答链
+qa = RetrievalQA.from_chain_type(
+    llm=chat_model,
+    retriever=retriever,
+    chain_type="stuff"
+)
+```
+
+## 常见问题及解决方案
+
+### 1. 模型加载失败
+**问题**：找不到本地模型文件
+```python
+# 确保路径正确
+model_path = r"D:\model_T\Qwen\Qwen2.5-0.5B-Instruct"
+```
+**解决**：检查路径是否存在，或使用相对路径
+
+### 2. 显存不足
+**问题**：GPU 显存不足导致 OOM
+```python
+# 解决方案1：使用 CPU
+device_map="cpu"
+
+# 解决方案2：使用 8-bit 量化
+from transformers import BitsAndBytesConfig
+quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_path,
+    quantization_config=quantization_config
+)
+```
+
+### 3. Ollama 连接失败
+**问题**：无法连接到 Ollama 服务
+```bash
+# 检查 Ollama 是否运行
+ollama list
+
+# 启动 Ollama 服务
+ollama serve
+```
+
+### 4. FAISS 导入错误
+**问题**：`No module named 'faiss'`
+```bash
+# 安装 CPU 版本
+pip install faiss-cpu
+
+# 或 GPU 版本
+pip install faiss-gpu
+```
+
+### 5. 中文编码问题
+**问题**：中文显示乱码
+```python
+# 确保文件以 UTF-8 编码保存
+# 在代码中指定编码
+loader = TextLoader("file.txt", encoding='utf-8')
+```
+
+## 扩展建议
+
+### 1. 添加更多链类型
+- **SequentialChain**：串联多个链
+- **LLMMathChain**：数学计算链
+- **APIChain**：API 调用链
+
+### 2. 优化 RAG 系统
+- 使用不同的向量数据库（Chroma、Pinecone、Weaviate）
+- 添加重排序（reranking）提升检索质量
+- 实现多轮对话的 RAG
+
+### 3. 添加记忆功能
+```python
+from langchain.memory import ConversationBufferMemory
+
+memory = ConversationBufferMemory()
+chain = (
+    {"input": lambda x: x["input"]}
+    | prompt
+    | llm
+    | output_parser
+)
+```
+
+### 4. 添加评估
+```python
+from langchain.evaluation import load_evaluator
+
+evaluator = load_evaluator("qa")
+evaluation_result = evaluator.evaluate_strings(
+    prediction=response,
+    reference=expected_answer,
+    input=question
+)
+```
+
+## 相关资源
+
+- [LangChain 官方文档](https://python.langchain.com/docs/)
+- [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)
+- [FAISS 文档](https://github.com/facebookresearch/faiss)
+- [Ollama 官方文档](https://github.com/ollama/ollama)
+- [Qwen 模型库](https://huggingface.co/Qwen)
+
+## 许可证
+
+本项目仅供学习交流使用。
+
+---
+
+**Happy Coding with LangChain! 🚀**
+
+
+
+
+
+
+
